@@ -1,3 +1,3 @@
-module test
+module test-tunny
 
-go 1.13
+go 1.19

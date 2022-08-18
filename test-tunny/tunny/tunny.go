@@ -162,7 +162,7 @@ func NewCallback(n int) *Pool {
 // Pool has been stopped.
 // Process是用户调用方法个
 func (p *Pool) Process(payload interface{}) interface{} {
-	atomic.AddInt64(&p.queuedJobs, 1)   //任务数+1
+	atomic.AddInt64(&p.queuedJobs, 1)   //任务数+1,原子操作防止并发不一致
 
 	request, open := <-p.reqChan  //请求chan中取值,在worker.go101行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
 	if !open {
