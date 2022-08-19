@@ -69,7 +69,7 @@ func newWorkerWrapper(
 	// wrap后的多了几个chan
 	w := workerWrapper{
 		worker:        worker,   //worker是p.ctor(),是&closureWorker{processor: f,},f是任务函数😈
-		interruptChan: make(chan struct{}),
+		interruptChan: make(chan struct{}),  //初始化了😯
 		reqChan:       reqChan,//这是一个空chanel类型是workRequest,pool初始化定义的
 		closeChan:     make(chan struct{}),
 		closedChan:    make(chan struct{}),
@@ -105,12 +105,12 @@ func (w *workerWrapper) run() {
 		case w.reqChan <- workRequest{
 			jobChan:       jobChan,
 			retChan:       retChan,
-			interruptFunc: w.interrupt, //关闭interruptChan
+			interruptFunc: w.interrupt, //关闭interruptChan,暴露给tunny.go中调用
 		}:
 			select {
 				// ⭐️ 程序启动时,创建pool,w.run启动的goruntime会阻塞在这里,等待jobchan(无缓冲的chan都会阻塞)
 				// jobchan中取任务函数参数,tunny.go 171行传递     阻塞 🚽
-			case payload := <-jobChan:
+			case payload := <-jobChan: //worker等待执行任务参数
 				// closureWorker的Process方法实现
 				// func (w *closureWorker) Process(payload interface{}) interface{} {
 				// 	return w.processor(payload)  在这里调用用户定义的func,payload是参数
@@ -118,11 +118,13 @@ func (w *workerWrapper) run() {
 				result := w.worker.Process(payload)  
 				select {
 				case retChan <- result:   //将结果丢给resultchan,tunny.go 173行解除阻塞  🚽
-				case <-w.interruptChan:
-					w.interruptChan = make(chan struct{})
+				////解决超时了,case retChan <- result一直等待
+				case <-w.interruptChan:  //w.interruptChan 是空channel.任务设置超时后,会request.interruptFunc(),close掉该channel,超时时会执行
+					w.interruptChan = make(chan struct{})  //重新赋值,成为一个新的准备worker
 				}
+				//////解决设置超时触发了,case payload := <-jobChan:一直等待
 			case <-w.interruptChan:
-				w.interruptChan = make(chan struct{})
+				w.interruptChan = make(chan struct{})  ////重新赋值,成为一个新的准备worker
 			}
 			//此处调用w的close方法,让任务结束
 			// 关闭的channel不能写数据,但是可以从里取数据,如果其中没数据会一直取到0👻
@@ -138,8 +140,7 @@ func (w *workerWrapper) stop() {
 	close(w.closeChan)
 }
 
-func (w *workerWrapper) join() {
-	// 等待close(w.closeChan)后,w.run函数结束最后会执行
+func (w *workerWrapper) join() {	// 等待close(w.closeChan)后,w.run函数结束最后会执行
 	<-w.closedChan   // 与上面的w.closeChan不同; 如果w.closedChan没关闭会阻塞在这里
 }
 

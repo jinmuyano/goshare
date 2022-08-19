@@ -164,7 +164,7 @@ func NewCallback(n int) *Pool {
 func (p *Pool) Process(payload interface{}) interface{} {
 	atomic.AddInt64(&p.queuedJobs, 1)   //任务数+1,原子操作防止并发不一致
 
-	request, open := <-p.reqChan  //请求chan中取值,在worker.go 101行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
+	request, open := <-p.reqChan  //请求chan中取值(woker处于准备中...),在worker.go 101行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
 	if !open {
 		panic(ErrPoolNotRunning)
 	}
@@ -184,6 +184,11 @@ func (p *Pool) Process(payload interface{}) interface{} {
 // the result. If the timeout occurs before the job has finished the worker will
 // be interrupted and ErrJobTimedOut will be returned. ProcessTimed can be
 // called safely by any goroutines.
+//ProcessTimed将使用池处理有效负载并同步返回
+//结果。如果超时发生在作业完成之前，则工作人员将：
+//被中断，将返回ErrJobTimedOut。ProcessTimed可以是
+//被任何一个goroutines安全地调用。
+// 可以加一个任务执行超时时间,针对每个woker的超时时间
 func (p *Pool) ProcessTimed(
 	payload interface{},
 	timeout time.Duration,
@@ -191,45 +196,58 @@ func (p *Pool) ProcessTimed(
 	atomic.AddInt64(&p.queuedJobs, 1)
 	defer atomic.AddInt64(&p.queuedJobs, -1)
 
-	tout := time.NewTimer(timeout)
+	tout := time.NewTimer(timeout)  //计时器:计时timeout秒,,t.Reset(time.Second * 2)是重新计时
 
 	var request workRequest
 	var open bool
 
 	select {
+		//请求chan中取值,在worker.go 105行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
+		//超时和p.reqChan谁先返回,先执行哪个case
 	case request, open = <-p.reqChan:
 		if !open {
 			return nil, ErrPoolNotRunning
 		}
+	// 计时时间到t.C,退出任务
 	case <-tout.C:
 		return nil, ErrJobTimedOut
 	}
 
 	select {
+		// 阻塞,等待调用参数传递
 	case request.jobChan <- payload:
+		//超时退出
 	case <-tout.C:
 		request.interruptFunc()
 		return nil, ErrJobTimedOut
 	}
 
 	select {
+		//等待任务执行结果
 	case payload, open = <-request.retChan:
 		if !open {
 			return nil, ErrWorkerClosed
 		}
+		//超时退出
 	case <-tout.C:
 		request.interruptFunc()
 		return nil, ErrJobTimedOut
 	}
-
+	//关闭计时器
 	tout.Stop()
-	return payload, nil
+	return payload, nil  //返回结果给用户
 }
 
 // ProcessCtx will use the Pool to process a payload and synchronously return
 // the result. If the context cancels before the job has finished the worker will
 // be interrupted and ErrJobTimedOut will be returned. ProcessCtx can be
 // called safely by any goroutines.
+//ProcessCtx将使用该池处理有效负载并同步返回
+//结果。如果上下文在作业完成之前取消，则工作人员将：
+//被中断，将返回ErrJobTimedOut。ProcessCtx可以是
+//被任何一个goroutines安全地调用。
+
+// 参数:ctx,任务参数
 func (p *Pool) ProcessCtx(ctx context.Context, payload interface{}) (interface{}, error) {
 	atomic.AddInt64(&p.queuedJobs, 1)
 	defer atomic.AddInt64(&p.queuedJobs, -1)
@@ -249,7 +267,7 @@ func (p *Pool) ProcessCtx(ctx context.Context, payload interface{}) (interface{}
 	select {
 	case request.jobChan <- payload:
 	case <-ctx.Done():
-		request.interruptFunc()
+		request.interruptFunc()   //
 		return nil, ctx.Err()
 	}
 
@@ -267,6 +285,7 @@ func (p *Pool) ProcessCtx(ctx context.Context, payload interface{}) (interface{}
 }
 
 // QueueLength returns the current count of pending queued jobs.
+// 返回正在执行的任务数
 func (p *Pool) QueueLength() int64 {
 	return atomic.LoadInt64(&p.queuedJobs)
 }
@@ -306,7 +325,7 @@ func (p *Pool) SetSize(n int) {
 	// func (w *workerWrapper) stop() {
 	// 	close(w.closeChan)
 	// }
-	////第一次初始化pool,lWorkers是0,下面的都不执行
+	////第一次初始化pool,lWorkers是0,下面的都不执行,n至为0时会将worker都关闭调
 	for i := n; i < lWorkers; i++ {
 		p.workers[i].stop()    //pool.close时会调用: 改变w.closeChan的状态为关闭,woker再第二次for循环就不阻塞w.closeChan
 	}
@@ -324,6 +343,7 @@ func (p *Pool) SetSize(n int) {
 }
 
 // GetSize returns the current size of the pool.
+// 获取pool中worker数量
 func (p *Pool) GetSize() int {
 	p.workerMut.Lock()
 	defer p.workerMut.Unlock()
@@ -332,6 +352,7 @@ func (p *Pool) GetSize() int {
 }
 
 // Close will terminate all workers and close the job channel of this Pool.
+// 关闭池子
 func (p *Pool) Close() {
 	p.SetSize(0)
 	close(p.reqChan)
