@@ -139,7 +139,8 @@ func (w *workerWrapper) stop() {
 }
 
 func (w *workerWrapper) join() {
-	<-w.closedChan   // 与上面的w.closeChan不同,如果w.closedChan没关闭会阻塞在这里
+	// 等待close(w.closeChan)后,w.run函数结束最后会执行
+	<-w.closedChan   // 与上面的w.closeChan不同; 如果w.closedChan没关闭会阻塞在这里
 }
 
 //------------------------------------------------------------------------------
