@@ -1,7 +1,7 @@
 /*
  * @Date: 2022-08-17 17:20:41
  * @LastEditors: zhangwenqiang
- * @LastEditTime: 2022-08-18 18:33:16
+ * @LastEditTime: 2022-08-19 11:50:30
  * @FilePath: /test-tunny/main.go
  */
 // /*
@@ -59,15 +59,15 @@ import (
 )
 
 func main() {
-	// 创建3000的
-	pool := tunny.NewFunc(3000, func(i interface{}) interface{} {
+	// 创建3000并发的池子
+	pool := tunny.NewFunc(5, func(i interface{}) interface{} {
 		log.Println(i)
 		time.Sleep(time.Second)
 		return nil
 	})
 	defer pool.Close()
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 1000; i++ {
 		go pool.Process(i) //参数i是传给任务函数的
 	}
 	time.Sleep(time.Second * 4)

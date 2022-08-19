@@ -19,7 +19,6 @@
 // THE SOFTWARE.
 
 package tunny
-
 //------------------------------------------------------------------------------
 
 // workRequest is a struct containing context representing a workers intention
@@ -62,6 +61,7 @@ type workerWrapper struct {
 }
 
 // 构造函数,创建workerWrapper
+// 调用newWorkerWrapper 就会调用w.run(),woker开始工作,等到调用pool.Process传递任务
 func newWorkerWrapper(
 	reqChan chan<- workRequest,
 	worker Worker, //closureWorker{}
@@ -70,7 +70,7 @@ func newWorkerWrapper(
 	w := workerWrapper{
 		worker:        worker,   //worker是p.ctor(),是&closureWorker{processor: f,},f是任务函数😈
 		interruptChan: make(chan struct{}),
-		reqChan:       reqChan,//这是一个空chanel,pool初始化定义的
+		reqChan:       reqChan,//这是一个空chanel类型是workRequest,pool初始化定义的
 		closeChan:     make(chan struct{}),
 		closedChan:    make(chan struct{}),
 	}
@@ -100,14 +100,16 @@ func (w *workerWrapper) run() {
 		w.worker.BlockUntilReady()  //接口拓展方法,没有实现
 		select {
 			// 往reqchan中传递workRequest实例,等待process函数接收调用
+			// pool.close 后,这里执行会失败,会执行下一个case
+			// 每个worker执行完任务,进入这里进入准备执行任务状态
 		case w.reqChan <- workRequest{
 			jobChan:       jobChan,
 			retChan:       retChan,
 			interruptFunc: w.interrupt, //关闭interruptChan
 		}:
 			select {
-				// 程序启动时,w.run启动的goruntime会阻塞在这里,等待jobchan(无缓冲的chan都会阻塞)
-				// jobchan中取任务函数参数,tunny.go 171行传递
+				// ⭐️ 程序启动时,创建pool,w.run启动的goruntime会阻塞在这里,等待jobchan(无缓冲的chan都会阻塞)
+				// jobchan中取任务函数参数,tunny.go 171行传递     阻塞 🚽
 			case payload := <-jobChan:
 				// closureWorker的Process方法实现
 				// func (w *closureWorker) Process(payload interface{}) interface{} {
@@ -115,13 +117,15 @@ func (w *workerWrapper) run() {
 				// }
 				result := w.worker.Process(payload)  
 				select {
-				case retChan <- result:   //将结果丢给resultchan,tunny.go 173行解除阻塞
+				case retChan <- result:   //将结果丢给resultchan,tunny.go 173行解除阻塞  🚽
 				case <-w.interruptChan:
 					w.interruptChan = make(chan struct{})
 				}
 			case <-w.interruptChan:
 				w.interruptChan = make(chan struct{})
 			}
+			//此处调用w的close方法,让任务结束
+			// 关闭的channel不能写数据,但是可以从里取数据,如果其中没数据会一直取到0👻
 		case <-w.closeChan:
 			return //携程结束
 		}
@@ -135,7 +139,7 @@ func (w *workerWrapper) stop() {
 }
 
 func (w *workerWrapper) join() {
-	<-w.closedChan
+	<-w.closedChan   // 与上面的w.closeChan不同,如果w.closedChan没关闭会阻塞在这里
 }
 
 //------------------------------------------------------------------------------

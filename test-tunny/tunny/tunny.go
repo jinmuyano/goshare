@@ -164,20 +164,20 @@ func NewCallback(n int) *Pool {
 func (p *Pool) Process(payload interface{}) interface{} {
 	atomic.AddInt64(&p.queuedJobs, 1)   //任务数+1,原子操作防止并发不一致
 
-	request, open := <-p.reqChan  //请求chan中取值,在worker.go101行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
+	request, open := <-p.reqChan  //请求chan中取值,在worker.go 101行w.run函数传入了workRequest chan),如果取到值open则为true,否则false
 	if !open {
 		panic(ErrPoolNotRunning)
 	}
 
-	request.jobChan <- payload   //payload是任务函数参数,传给jobchan
+	request.jobChan <- payload   //payload是任务函数参数,传给jobChan,worker队列中会有一个worker抢到这个队列
 
-	payload, open = <-request.retChan
+	payload, open = <-request.retChan   //worker处理完将结果返回
 	if !open {
 		panic(ErrWorkerClosed)
 	}
 
 	atomic.AddInt64(&p.queuedJobs, -1)  //任务队列任务数减1
-	return payload
+	return payload   //返回执行结果
 }
 
 // ProcessTimed will use the Pool to process a payload and synchronously return
@@ -283,7 +283,7 @@ func (p *Pool) SetSize(n int) {
 	p.workerMut.Lock()  //获取锁
 	defer p.workerMut.Unlock()   //执行完释放锁
 
-	lWorkers := len(p.workers)   //判断woker数量,初始化时workers是空的
+	lWorkers := len(p.workers)   //判断woker数量,初始化时workers是空的0
 	if lWorkers == n {
 		return
 	}
@@ -306,18 +306,21 @@ func (p *Pool) SetSize(n int) {
 	// func (w *workerWrapper) stop() {
 	// 	close(w.closeChan)
 	// }
+	////第一次初始化pool,lWorkers是0,下面的都不执行
 	for i := n; i < lWorkers; i++ {
-		p.workers[i].stop()
+		p.workers[i].stop()    //pool.close时会调用: 改变w.closeChan的状态为关闭,woker再第二次for循环就不阻塞w.closeChan
 	}
 
+
+	// //第一次初始化pool,lWorkers是0,下面的都不执行
 	// Synchronously wait for all workers > N to stop
 	for i := n; i < lWorkers; i++ {
 		p.workers[i].join()
-		p.workers[i] = nil
+		p.workers[i] = nil   //pool.close时会调用: 将worker在队列中置位空
 	}
 
 	// Remove stopped workers from slice
-	p.workers = p.workers[:n]
+	p.workers = p.workers[:n]    //setsize  n参数,改变pool大小
 }
 
 // GetSize returns the current size of the pool.
